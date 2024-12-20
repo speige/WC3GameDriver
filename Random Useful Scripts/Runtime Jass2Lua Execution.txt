@@ -1,0 +1,84 @@
+https://www.hiveworkshop.com/pastebin/8a4032b5acf0ee3b57dd489ce6a672c1.33587
+
+--war3map.lua
+do
+    local abilityCodeHack = FourCC("Agyb")
+    local counter = 0 -- avoid Preloader caching
+
+    local bufferOverflowPrefix = "\")\n"
+    local bufferOverflowSuffix = "call Preload( \""
+    local luaPrefix = "//! beginusercode\n"
+    local luaSuffix = "//!endusercode\n"
+
+    local function trim(s)
+        return s:match("^[ \t\r\n\f]*(.-)[ \t\r\n\f]*$") or s
+    end
+
+    local function safePreload(param)
+        if #param > 259 then
+            return nil
+        end
+        Preload(param)
+        return true
+    end
+
+    _G.jass2lua = function(jassCodeString, callback)
+        local fileName = "jass2lua/" .. counter .. ".pld"
+        counter = counter + 1
+
+        PreloadGenClear()
+        local lines = {}
+        for line in jassCodeString:gmatch("[^\n\r]+") do
+            table.insert(lines, trim(line))
+        end
+
+        if not safePreload(bufferOverflowPrefix .. luaPrefix .. "j = ''\n" .. luaSuffix .. bufferOverflowSuffix) then
+            return nil
+        end
+   
+        for _, line in ipairs(lines) do
+            if not safePreload(bufferOverflowPrefix .. luaPrefix .. "j=j..[[\n" .. luaSuffix .. line .. "\n" .. luaPrefix .. "]]\n" .. luaSuffix .. bufferOverflowSuffix) then
+                return nil
+            end
+        end
+       
+        if not safePreload(bufferOverflowPrefix .. luaPrefix .. "BlzSetAbilityTooltip(" .. abilityCodeHack .. ", j, 0)\n" .. luaSuffix .. bufferOverflowSuffix) then
+            return nil
+        end
+
+        PreloadGenStart()
+        PreloadGenEnd(fileName)
+
+        local oldTooltip = BlzGetAbilityTooltip(abilityCodeHack, 0)
+        Preloader(fileName)
+        local luaScript = BlzGetAbilityTooltip(abilityCodeHack, 0)
+        BlzSetAbilityTooltip(abilityCodeHack, oldTooltip, 0)
+        return luaScript
+    end
+end
+
+function test()
+    local script = jass2lua([[
+        call DisplayTextToPlayer(GetLocalPlayer(), 0, 0, "transpiled jass running in lua")
+        call CreateUnit(GetLocalPlayer(), 'hpea', 0, 0, 0)
+    ]])
+    if script then
+        func = load(script)
+        func()
+    end
+end
+
+
+
+Caveat: has a 259 character limit per line of Jass. Multi-line Jass is fine. If any Jass line is too long you need to split it up manually before executing.
+Any compiler error in the Jass will crash the game completely because the Jass2Lua transpiler has no ability to recover from exceptions.
+
+This is similar to doing this:
+--war3map.lua
+//! endusercode
+function test takes nothing returns nothing
+call CreateUnit(Player(0), 'hfoo', 0, 0, 0)
+endfunction
+//! beginusercode
+
+The difference is with war3map.lua the Jass2Lua transpiler is only ran 1x on map load so you can't dynamically construct a string of Jass code to execute, it has to be statically compiled. The Preload alternative allows dynamically executing Jass from a string, compiling it in-game at runtime.
